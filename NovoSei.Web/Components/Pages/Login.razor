@@ -1,0 +1,250 @@
+@page "/login"
+@using Microsoft.AspNetCore.Components.Authorization
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JS
+
+<PageTitle>Acesso ao Sistema - Novo SEI</PageTitle>
+
+<div class="min-h-screen flex items-center justify-center bg-slate-900 px-4 relative overflow-hidden">
+    <!-- Background glowing blobs -->
+    <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-500/20 rounded-full blur-3xl"></div>
+    <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl"></div>
+
+    <div class="w-full max-w-md bg-slate-800/80 backdrop-blur-xl border border-slate-700/60 rounded-3xl shadow-2xl p-8 space-y-6 relative z-10">
+        <!-- Logo Header -->
+        <div class="text-center space-y-2">
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl text-white text-3xl font-bold shadow-lg shadow-indigo-500/30">
+                ⚡
+            </div>
+            <h1 class="text-2xl font-extrabold text-white tracking-tight">NOVO SEI</h1>
+            <p class="text-slate-400 text-xs font-semibold tracking-wider uppercase">Sistema Eletrônico de Informações</p>
+        </div>
+
+        @if (!mfaRequired)
+        {
+            <!-- Stage 1: LDAP Credentials -->
+            <form @onsubmit="SubmeterLogin" class="space-y-4">
+                <div class="space-y-1">
+                    <label class="text-xs font-bold text-slate-400 uppercase tracking-wider">Usuário LDAP</label>
+                    <div class="relative">
+                        <input type="text" @bind="username" placeholder="Digite seu usuário" required
+                               class="w-full bg-slate-950/60 border border-slate-700/80 text-white placeholder-slate-500 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all" />
+                    </div>
+                </div>
+
+                <div class="space-y-1">
+                    <label class="text-xs font-bold text-slate-400 uppercase tracking-wider">Senha de Rede</label>
+                    <div class="relative">
+                        <input type="password" @bind="password" placeholder="Digite sua senha" required
+                               class="w-full bg-slate-950/60 border border-slate-700/80 text-white placeholder-slate-500 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all" />
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrEmpty(mensagemErro))
+                {
+                    <div class="p-3 bg-red-950/40 border border-red-900/50 rounded-xl flex items-start gap-2.5">
+                        <span class="text-red-400 text-sm mt-0.5">⚠️</span>
+                        <span class="text-xs text-red-300 font-medium leading-relaxed">@mensagemErro</span>
+                    </div>
+                }
+
+                <button type="submit" disabled="@processando"
+                        class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-indigo-500/20 transition-all flex items-center justify-center gap-2">
+                    @if (processando)
+                    {
+                        <span class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                        <span>Autenticando...</span>
+                    }
+                    else
+                    {
+                        <span>Entrar</span>
+                    }
+                </button>
+            </form>
+        }
+        else
+        {
+            <!-- Stage 2: 2FA Verification -->
+            <form @onsubmit="Submeter2Fa" class="space-y-4">
+                <div class="bg-indigo-950/40 border border-indigo-900/60 p-4 rounded-xl space-y-1">
+                    <h3 class="text-sm font-bold text-indigo-300 flex items-center gap-1.5">
+                        🛡️ Autenticação em Duas Etapas
+                    </h3>
+                    <p class="text-[11px] text-slate-400 leading-relaxed">
+                        A verificação por segundo fator está habilitada para o usuário <strong class="text-slate-300">@username</strong>. Digite o código de 6 dígitos gerado em seu celular.
+                    </p>
+                </div>
+
+                <div class="space-y-1">
+                    <label class="text-xs font-bold text-slate-400 uppercase tracking-wider block text-center">Código de Segurança</label>
+                    <input type="text" maxlength="6" @bind="codigo2Fa" placeholder="000 000" required autofocus
+                           class="w-full bg-slate-950/60 border border-slate-700/80 text-white placeholder-slate-600 rounded-xl px-4 py-3 text-2xl font-mono text-center tracking-widest focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all" />
+                </div>
+
+                <div class="flex items-center gap-2 py-1 select-none cursor-pointer" @onclick="AlternarConfiarDispositivo">
+                    <input type="checkbox" checked="@confiarDispositivo" readonly
+                           class="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-indigo-500" />
+                    <span class="text-xs text-slate-300 font-medium">Confiar neste dispositivo por 30 dias</span>
+                </div>
+
+                @if (!string.IsNullOrEmpty(mensagemErro))
+                {
+                    <div class="p-3 bg-red-950/40 border border-red-900/50 rounded-xl flex items-start gap-2.5">
+                        <span class="text-red-400 text-sm mt-0.5">⚠️</span>
+                        <span class="text-xs text-red-300 font-medium leading-relaxed">@mensagemErro</span>
+                    </div>
+                }
+
+                <div class="flex gap-3 pt-2">
+                    <button type="button" @onclick="VoltarParaCredenciais" disabled="@processando"
+                            class="flex-1 border border-slate-700 text-slate-300 font-semibold py-3 px-4 rounded-xl hover:bg-slate-750 transition-all text-sm">
+                        Voltar
+                    </button>
+                    <button type="submit" disabled="@processando"
+                            class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 text-sm">
+                        @if (processando)
+                        {
+                            <span class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                            <span>Verificando...</span>
+                        }
+                        else
+                        {
+                            <span>Confirmar</span>
+                        }
+                    </button>
+                </div>
+            </form>
+        }
+    </div>
+</div>
+
+@code {
+    private string username = string.Empty;
+    private string password = string.Empty;
+    private bool mfaRequired = false;
+    private string codigo2Fa = string.Empty;
+    private bool confiarDispositivo = false;
+
+    private bool processando = false;
+    private string mensagemErro = string.Empty;
+
+    public class LoginResultDto
+    {
+        public bool MfaRequired { get; set; }
+        public string? Login { get; set; }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Registrar função JS para fazer a chamada de API contornando limitação de cookies do WebSocket
+            await JS.InvokeVoidAsync("eval", @"
+                window.performLoginApi = async (url, data) => {
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(data)
+                    });
+                    if (!response.ok) {
+                        const text = await response.text();
+                        throw new Error(text || 'Erro na requisição');
+                    }
+                    return await response.json();
+                };
+            ");
+        }
+    }
+
+    private async Task SubmeterLogin()
+    {
+        processando = true;
+        mensagemErro = string.Empty;
+
+        try
+        {
+            var data = new { Login = username, Senha = password };
+            var result = await JS.InvokeAsync<LoginResultDto>("performLoginApi", "/api/auth/login", data);
+
+            if (result.MfaRequired)
+            {
+                mfaRequired = true;
+                codigo2Fa = string.Empty;
+            }
+            else
+            {
+                // Login com sucesso (cookie salvo) - Redirecionar recarregando a página
+                NavigationManager.NavigateTo("/", forceLoad: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            mensagemErro = ex.Message.Replace("Error: ", "");
+            if (mensagemErro.Contains("Unauthorized") || mensagemErro.Contains("401"))
+            {
+                mensagemErro = "Usuário ou senha incorretos.";
+            }
+        }
+        finally
+        {
+            processando = false;
+        }
+    }
+
+    private async Task Submeter2Fa()
+    {
+        if (string.IsNullOrWhiteSpace(codigo2Fa) || codigo2Fa.Length != 6)
+        {
+            mensagemErro = "Insira o código de segurança de 6 dígitos.";
+            return;
+        }
+
+        processando = true;
+        mensagemErro = string.Empty;
+
+        try
+        {
+            var data = new
+            {
+                Login = username,
+                Senha = password,
+                Codigo = codigo2Fa,
+                ConfiarDispositivo = confiarDispositivo
+            };
+
+            var result = await JS.InvokeAsync<LoginResultDto>("performLoginApi", "/api/auth/verify-2fa", data);
+
+            if (!result.MfaRequired)
+            {
+                // Login + 2FA com sucesso - Redirecionar
+                NavigationManager.NavigateTo("/", forceLoad: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            mensagemErro = ex.Message.Replace("Error: ", "");
+            if (mensagemErro.Contains("BadRequest") || mensagemErro.Contains("400"))
+            {
+                mensagemErro = "Código de segurança incorreto ou expirado. Tente novamente.";
+            }
+        }
+        finally
+        {
+            processando = false;
+        }
+    }
+
+    private void AlternarConfiarDispositivo()
+    {
+        confiarDispositivo = !confiarDispositivo;
+    }
+
+    private void VoltarParaCredenciais()
+    {
+        mfaRequired = false;
+        codigo2Fa = string.Empty;
+        mensagemErro = string.Empty;
+    }
+}

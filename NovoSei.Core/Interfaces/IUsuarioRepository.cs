@@ -7,4 +7,5 @@ public interface IUsuarioRepository
     Task<Usuario?> ObterPorLoginAsync(string login);
     Task<Usuario> CriarAsync(Usuario usuario);
     Task AtualizarUltimoAcessoAsync(int usuarioId);
+    Task Atualizar2FaAsync(int usuarioId, bool habilitado, string? segredo, string? emailAlternativo, string? tokenAtivacao, DateTime? expiracao);
 }

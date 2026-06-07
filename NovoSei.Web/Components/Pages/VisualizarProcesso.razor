@@ -1,0 +1,883 @@
+@page "/processo/{ProcessoId:int}"
+@using NovoSei.Core.Entities
+@using NovoSei.Infrastructure.Data
+@using Microsoft.EntityFrameworkCore
+@using NovoSei.Core.Interfaces
+@using Microsoft.AspNetCore.Components.Authorization
+@using System.Security.Claims
+@inject IDocumentoService DocumentoService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Navigation
+@inject IAssistenteService AssistenteService
+@rendermode InteractiveServer
+@inject IComentarioService ComentarioService
+@inject ApplicationDbContext Db
+@inject IControlePrazoService ControlePrazoService
+@inject ISlaCalculatorService SlaCalculator
+
+<div class="container mx-auto p-6 max-w-7xl">
+    <!-- Breadcrumb & Process Header -->
+    <div class="mb-6">
+        <div class="flex items-center space-x-2 text-sm text-slate-500 mb-2">
+            <a href="/" class="hover:text-indigo-600 transition-colors">Caixa de Entrada</a>
+            <span>/</span>
+            <span class="text-slate-700 font-medium">Processo nº @(processo?.NumeroSequencial ?? ProcessoId.ToString())</span>
+        </div>
+
+        @if (processo != null)
+        {
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                    <h2 class="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                        <span>📂</span> Processo: @processo.NumeroSequencial
+                    </h2>
+                    <div class="flex flex-wrap items-center gap-3 mt-2">
+                        <span class="text-slate-600 font-light text-xs"><b>Assunto:</b> @processo.Assunto</span>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                            📁 @processo.Tipo
+                        </span>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold @(processo.NivelAcesso == "Público" ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : processo.NivelAcesso == "Restrito" ? "bg-amber-50 text-amber-700 border border-amber-100" : "bg-rose-50 text-rose-700 border border-rose-100")">
+                            🔒 @processo.NivelAcesso
+                        </span>
+                        @if (!string.IsNullOrEmpty(processo.Interessados))
+                        {
+                            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                👥 Interessados: @processo.Interessados
+                            </span>
+                        }
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <a href="/processo/@ProcessoId/auditoria" class="px-4 py-1.5 bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 transition-colors text-xs font-bold rounded-lg flex items-center gap-1">
+                        <span>🛡️</span> Auditoria (Tabelas Temporais)
+                    </a>
+                    <span class="text-xs font-semibold uppercase tracking-wider px-3 py-1.5 rounded-full border @(processo.Status == "Aberto" ? "bg-indigo-50 text-indigo-700 border-indigo-200" : "bg-slate-100 text-slate-600 border-slate-200")">
+                        @processo.Status
+                    </span>
+                    <span class="text-xs text-slate-400">Criado em: @processo.CriadoEm.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span>
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (carregando)
+    {
+        <div class="flex flex-col items-center justify-center min-h-[400px]">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+            <p class="text-slate-600 font-medium">Carregando dados do processo...</p>
+        </div>
+    }
+    else if (processo == null)
+    {
+        <div class="bg-red-50 border border-red-200 rounded-xl p-6 text-center">
+            <h3 class="text-lg font-bold text-red-800 mb-2">Processo não encontrado</h3>
+            <p class="text-red-600 mb-4">O processo de ID @ProcessoId não existe no sistema.</p>
+            <a href="/" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+                Voltar para Caixa de Entrada
+            </a>
+        </div>
+    }
+    else
+    {
+        <!-- Split-Pane Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            <!-- Left Pane: Timeline of Documents and Events -->
+            <div class="lg:col-span-5 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <div class="px-5 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                    <h3 class="font-extrabold text-slate-800 flex items-center gap-2">
+                        <span>📜</span> Histórico & Trâmites
+                    </h3>
+                    <span class="text-xs text-slate-500 font-medium">@(timelineEvents.Count) eventos</span>
+                </div>
+
+                <!-- SLA Control Panel -->
+                <div class="p-5 border-b border-slate-100 bg-indigo-50/20 space-y-3">
+                    <h4 class="text-xs font-black text-indigo-950 uppercase tracking-wider flex items-center justify-between mb-1">
+                        <span>⏱️ Controle de Prazos (SLA)</span>
+                        @if (activeDeadline != null && !definindoPrazo)
+                        {
+                            <span class="text-[9px] text-indigo-600 font-bold bg-indigo-100 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                Ativo na Unidade
+                            </span>
+                        }
+                    </h4>
+
+                    @if (activeDeadline != null && diasRestantes.HasValue)
+                    {
+                        var alertClass = "bg-emerald-50 text-emerald-800 border-emerald-200";
+                        var daysWord = Math.Abs(diasRestantes.Value) == 1 ? "dia" : "dias";
+                        var statusText = "Em dia";
+
+                        if (diasRestantes.Value <= 0)
+                        {
+                            alertClass = "bg-red-50 text-red-800 border-red-200 animate-pulse";
+                            statusText = diasRestantes.Value == 0 ? "Vence hoje!" : $"Atrasado há {Math.Abs(diasRestantes.Value)} {daysWord}";
+                        }
+                        else if (diasRestantes.Value <= 5)
+                        {
+                            alertClass = "bg-amber-50 text-amber-800 border-amber-200";
+                            statusText = $"{diasRestantes.Value} {daysWord} restantes";
+                        }
+                        else
+                        {
+                            statusText = $"{diasRestantes.Value} {daysWord} restantes";
+                        }
+
+                        <div class="flex flex-col gap-2 p-3.5 border rounded-xl @alertClass">
+                            <div class="flex justify-between items-center">
+                                <span class="text-xs font-extrabold uppercase tracking-wider">Status: @statusText</span>
+                                <span class="text-[10px] font-bold">Limite: @activeDeadline.DataLimite.ToString("dd/MM/yyyy")</span>
+                            </div>
+                            <div class="text-[10px] opacity-80 leading-relaxed">
+                                Definido por <strong>@activeDeadline.CriadoPorUsuario.Nome</strong> em @activeDeadline.DataLimite.ToString("dd/MM/yyyy") 
+                                @(activeDeadline.DiasUteis ? "(Contagem em Dias Úteis)" : "(Contagem em Dias Corridos)")
+                            </div>
+                            <div class="flex gap-2 justify-end mt-2 pt-2 border-t border-black/5">
+                                <button @onclick="RemoverPrazo" class="px-2.5 py-1.5 text-[10px] font-bold text-red-700 bg-red-100 hover:bg-red-200 rounded-lg transition-colors">
+                                    Remover
+                                </button>
+                                <button @onclick="ConcluirPrazo" class="px-2.5 py-1.5 text-[10px] font-bold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors">
+                                    Concluir Prazo
+                                </button>
+                            </div>
+                        </div>
+                    }
+                    else if (definindoPrazo)
+                    {
+                        <!-- Form to define new deadline -->
+                        <div class="p-4 bg-white border border-slate-200 rounded-xl space-y-3 shadow-inner">
+                            <h5 class="text-xs font-bold text-slate-700">Definir Novo Prazo</h5>
+                            
+                            <div class="grid grid-cols-1 gap-2">
+                                <div class="space-y-1">
+                                    <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Data Limite</label>
+                                    <input type="date" @bind="inputDataLimite" 
+                                           class="w-full text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500 bg-white" />
+                                </div>
+                                <div class="flex items-center gap-1.5 py-1 select-none cursor-pointer" @onclick="AlternarInputDiasUteis">
+                                    <input type="checkbox" checked="@inputDiasUteis" readonly
+                                           class="rounded bg-slate-50 border-slate-200 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5" />
+                                    <span class="text-xs text-slate-600 font-medium">Contar apenas Dias Úteis</span>
+                                </div>
+                            </div>
+
+                            @if (!string.IsNullOrEmpty(mensagemErroPrazo))
+                            {
+                                <span class="block text-[10px] text-red-600 font-semibold">@mensagemErroPrazo</span>
+                            }
+
+                            <div class="flex gap-2 justify-end pt-1">
+                                <button @onclick="() => definindoPrazo = false" class="px-2.5 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
+                                    Cancelar
+                                </button>
+                                <button @onclick="CriarNovoPrazo" class="px-3 py-1.5 text-[10px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm transition-colors">
+                                    Salvar Prazo
+                                </button>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="flex justify-between items-center p-3 border border-slate-150 rounded-xl bg-slate-50">
+                            <span class="text-xs text-slate-500 italic">Nenhum prazo definido para esta unidade.</span>
+                            <button @onclick="() => { definindoPrazo = true; mensagemErroPrazo = string.Empty; }" class="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-extrabold rounded-lg shadow-sm transition-colors">
+                                ⏱️ Definir Prazo
+                            </button>
+                        </div>
+                    }
+                </div>
+                
+                <div class="p-5 max-h-[600px] overflow-y-auto relative">
+                    <!-- Vertical Line of Timeline -->
+                    <div class="absolute left-[31px] top-6 bottom-6 w-0.5 bg-slate-200"></div>
+
+                    <div class="space-y-6">
+                        @foreach (var ev in timelineEvents)
+                        {
+                            var isSelected = ev.Document != null && documentoSelecionado != null && ev.Document.Id == documentoSelecionado.Id;
+                            
+                            <div class="relative flex gap-4 items-start group">
+                                <!-- Timeline Point Icon -->
+                                <div class="z-10 flex items-center justify-center w-8 h-8 rounded-full border-2 transition-all duration-200 
+                                            @(ev.Type == "process_created" ? "bg-blue-50 border-blue-500 text-blue-600" : "")
+                                            @(ev.Type == "document_created" ? (isSelected ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-indigo-500 text-indigo-600") : "")
+                                            @(ev.Type == "document_signed" ? "bg-emerald-50 border-emerald-500 text-emerald-600" : "")">
+                                    @if (ev.Type == "process_created")
+                                    {
+                                        <span>🏁</span>
+                                    }
+                                    else if (ev.Type == "document_created")
+                                    {
+                                        <span>📄</span>
+                                    }
+                                    else if (ev.Type == "document_signed")
+                                    {
+                                        <span>🔏</span>
+                                    }
+                                </div>
+
+                                <!-- Content Card -->
+                                <div class="flex-1 min-w-0 bg-white hover:bg-slate-50 border @(isSelected ? "border-indigo-400 bg-indigo-50/20 shadow-sm" : "border-transparent") rounded-lg p-3 cursor-pointer transition-all duration-200"
+                                     @onclick="() => OnEventClicked(ev)">
+                                    <div class="flex items-center justify-between gap-2 mb-1">
+                                        <h4 class="font-bold text-sm text-slate-800 truncate @(isSelected ? "text-indigo-900" : "")">
+                                            @ev.Title
+                                        </h4>
+                                        <span class="text-[10px] text-slate-400 font-medium whitespace-nowrap">
+                                            @ev.Date.ToLocalTime().ToString("dd/MM HH:mm")
+                                        </span>
+                                    </div>
+                                    <p class="text-xs text-slate-500 line-clamp-2">
+                                        @ev.Description
+                                    </p>
+
+                                    @if (ev.Document != null)
+                                    {
+                                        <div class="mt-2 flex items-center justify-between">
+                                            <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border @(ev.Document.Status == "Assinado" ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-amber-50 text-amber-700 border-amber-100")">
+                                                @ev.Document.Status
+                                            </span>
+                                            @if (ev.Document.Status == "Assinado")
+                                            {
+                                                <span class="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5">
+                                                    ✓ Assinado
+                                                </span>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+                
+                <!-- Process Comments Card -->
+                <div class="border-t border-slate-100 bg-slate-50/50 p-5 space-y-4">
+                    <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center justify-between">
+                        <span>💬 Comentários do Processo (@comentariosProcesso.Count)</span>
+                    </h4>
+                    
+                    <div class="space-y-3 max-h-[200px] overflow-y-auto pr-1">
+                        @if (comentariosProcesso.Count == 0)
+                        {
+                            <p class="text-[11px] text-slate-500 italic">Nenhum comentário cadastrado para este processo.</p>
+                        }
+                        else
+                        {
+                            @foreach (var c in comentariosProcesso)
+                            {
+                                <div class="bg-white border border-slate-150 rounded-lg p-2.5 text-xs relative group/comment">
+                                    <div class="flex justify-between items-start mb-1 text-[10px] text-slate-400">
+                                        <span class="font-bold text-slate-600">@c.Usuario.Nome</span>
+                                        <span>@c.CriadoEm.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span>
+                                    </div>
+                                    <p class="text-slate-700">@c.Descricao</p>
+                                    @if (c.UnidadeId == activeUnidadeId)
+                                    {
+                                        <button @onclick="() => ExcluirComentario(c.Id)" class="absolute right-2 bottom-2 text-[10px] text-rose-500 opacity-0 group-hover/comment:opacity-100 transition-opacity font-semibold">
+                                            Excluir
+                                        </button>
+                                    }
+                                </div>
+                            }
+                        }
+                    </div>
+
+                    <div class="flex gap-2">
+                        <input type="text" placeholder="Adicionar comentário ao processo..." @bind="novoComentarioProcesso"
+                               class="flex-1 text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500 bg-white" />
+                        <button @onclick="AdicionarComentarioProcesso" class="px-3 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 transition-colors">
+                            Enviar
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Pane: Document Viewer & Signature Action -->
+            <div class="lg:col-span-7 space-y-6">
+                @if (documentoSelecionado == null)
+                {
+                    <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-12 text-center flex flex-col items-center justify-center min-h-[400px]">
+                        <span class="text-5xl mb-4">🔍</span>
+                        <h3 class="text-lg font-bold text-slate-700">Nenhum documento selecionado</h3>
+                        <p class="text-slate-500 text-sm max-w-sm mt-1">
+                            Clique em qualquer documento na linha do tempo à esquerda para visualizar seu conteúdo, status de assinatura e exportação oficial.
+                        </p>
+                    </div>
+                }
+                else
+                {
+                    <!-- Document Header Card -->
+                    <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-4">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                            <div>
+                                <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Visualizando Documento</span>
+                                <h3 class="text-xl font-extrabold text-slate-800">@documentoSelecionado.Titulo</h3>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full border @(documentoSelecionado.Status == "Assinado" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200")">
+                                    @documentoSelecionado.Status
+                                </span>
+                                @if (documentoSelecionado.Status == "Assinado")
+                                {
+                                    <a href="/api/documentos/@(documentoSelecionado.Id)/download" 
+                                       target="_blank" 
+                                       class="px-3 py-1 bg-indigo-600 text-white text-xs font-semibold rounded-md shadow-sm hover:bg-indigo-700 transition-colors flex items-center gap-1">
+                                        <span>⬇</span> PDF
+                                    </a>
+                                }
+                            </div>
+                        </div>
+
+                        <!-- Signatures Log -->
+                        @if (documentoSelecionado.Assinaturas.Any())
+                        {
+                            <div class="bg-emerald-50/50 border border-emerald-100 rounded-lg p-4 space-y-2">
+                                <h4 class="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1">
+                                    🛡️ Assinaturas Eletrônicas Vinculadas
+                                </h4>
+                                <div class="divide-y divide-emerald-100/50">
+                                    @foreach (var ass in documentoSelecionado.Assinaturas)
+                                    {
+                                        <div class="py-2 text-xs text-slate-700 flex flex-col sm:flex-row sm:justify-between gap-1">
+                                            <div>
+                                                <b>@ass.Usuario.Nome</b> (@ass.Usuario.Email)
+                                            </div>
+                                            <div class="text-slate-500 font-light flex items-center gap-2">
+                                                <span>@ass.AssinadoEm.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss")</span>
+                                                <code class="bg-emerald-100/60 px-1.5 py-0.5 rounded text-[10px] font-mono text-emerald-800" title="SHA-256 Hash">
+                                                    @ass.HashSha256[..8]...
+                                                </code>
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+
+                        <!-- AI Summary Box -->
+                        <div class="bg-indigo-50/35 border border-indigo-100 rounded-xl p-5 mt-4">
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="text-sm font-bold text-indigo-900 flex items-center gap-1.5">
+                                    <span>✨</span> Resumo Executivo (IA Local)
+                                </h4>
+                                @if (!string.IsNullOrEmpty(resumoIa))
+                                {
+                                    <button @onclick="GerarResumo" class="text-xs text-indigo-600 hover:text-indigo-800 hover:underline">
+                                        Atualizar Resumo
+                                    </button>
+                                }
+                            </div>
+                            
+                            @if (gerandoResumo)
+                            {
+                                <div class="flex items-center space-x-2 text-xs text-slate-500 py-3">
+                                    <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-600"></div>
+                                    <span>Analisando conteúdo e gerando resumo (Qwen 2.5 Coder)...</span>
+                                </div>
+                            }
+                            else if (string.IsNullOrEmpty(resumoIa))
+                            {
+                                <p class="text-xs text-slate-500 mb-3 font-light">
+                                    Gere uma síntese executiva automática deste documento em segundos utilizando o modelo de inteligência artificial hospedado localmente no servidor.
+                                </p>
+                                <button @onclick="GerarResumo" class="px-4 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-bold text-xs rounded-lg hover:from-indigo-700 hover:to-violet-700 transition-all shadow-sm">
+                                    ✨ Gerar Resumo com IA
+                                </button>
+                            }
+                            else
+                            {
+                                <div class="bg-white border border-indigo-100/60 rounded-lg p-4 text-xs text-slate-700 space-y-2 prose max-w-none">
+                                    @((MarkupString)ConverterMarkdownParaHtml(resumoIa))
+                                </div>
+                            }
+                        </div>
+
+                        <!-- Document Body Content Render -->
+                        <div class="border border-slate-100 rounded-lg bg-slate-50 p-6 overflow-x-auto min-h-[300px]">
+                            <div class="bg-white shadow-sm border border-slate-200 mx-auto max-w-[800px] p-8 min-h-[400px] prose prose-slate">
+                                @((MarkupString)documentoSelecionado.ConteudoHtml)
+                            </div>
+                        </div>
+
+                        <!-- Signature Form (only show if status is Rascunho) -->
+                        @if (documentoSelecionado.Status == "Rascunho")
+                        {
+                            <div class="bg-slate-50 border border-slate-200 rounded-xl p-5 mt-6">
+                                <h4 class="text-sm font-bold text-slate-800 mb-3 flex items-center gap-1">
+                                    🔑 Assinatura Eletrônica do Documento
+                                </h4>
+                                <p class="text-xs text-slate-500 mb-4 font-light">
+                                    Para assinar este documento, valide suas credenciais institucionais do Active Directory (LDAP). Uma vez assinado, o documento ficará **bloqueado para edições** e o binário PDF oficial será gerado.
+                                </p>
+                                
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                                    <div>
+                                        <label class="block text-xs font-semibold text-slate-600 mb-1">Usuário LDAP (Login)</label>
+                                        <input type="text" @bind="usuarioAssinatura" 
+                                               class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+                                               placeholder="Ex: c036713" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-semibold text-slate-600 mb-1">Senha</label>
+                                        <input type="password" @bind="senhaAssinatura" 
+                                               class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+                                               placeholder="Sua senha institucional" />
+                                    </div>
+                                </div>
+
+                                @if (!string.IsNullOrEmpty(erroAssinatura))
+                                {
+                                    <div class="mb-4 text-xs font-bold text-red-700 bg-red-50 border border-red-100 rounded-lg p-3">
+                                        ⚠️ @erroAssinatura
+                                    </div>
+                                }
+
+                                @if (!string.IsNullOrEmpty(sucessoAssinatura))
+                                {
+                                    <div class="mb-4 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg p-3">
+                                        ✓ @sucessoAssinatura
+                                    </div>
+                                }
+
+                                <button @onclick="ExecutarAssinatura" 
+                                        disabled="@processandoAssinatura"
+                                        class="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold text-sm rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2">
+                                    @if (processandoAssinatura)
+                                    {
+                                        <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                        <span>Assinando e Gerando PDF...</span>
+                                    }
+                                    else
+                                    {
+                                        <span>🔏 Assinar Documento</span>
+                                    }
+                                </button>
+                            </div>
+                        }
+
+                        <!-- Document Comments -->
+                        <div class="border-t border-slate-100 pt-6 mt-6 space-y-4">
+                            <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center justify-between">
+                                <span>💬 Comentários do Documento (@comentariosDocumento.Count)</span>
+                            </h4>
+
+                            <div class="space-y-3 max-h-[200px] overflow-y-auto pr-1">
+                                @if (comentariosDocumento.Count == 0)
+                                {
+                                    <p class="text-[11px] text-slate-500 italic">Nenhum comentário cadastrado para este documento.</p>
+                                }
+                                else
+                                {
+                                    @foreach (var c in comentariosDocumento)
+                                    {
+                                        <div class="bg-slate-50/50 border border-slate-200 rounded-lg p-2.5 text-xs relative group/doc-comment">
+                                            <div class="flex justify-between items-start mb-1 text-[10px] text-slate-400">
+                                                <span class="font-bold text-slate-600">@c.Usuario.Nome</span>
+                                                <span>@c.CriadoEm.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span>
+                                            </div>
+                                            <p class="text-slate-700">@c.Descricao</p>
+                                            @if (c.UnidadeId == activeUnidadeId)
+                                            {
+                                                <button @onclick="() => ExcluirComentario(c.Id)" class="absolute right-2 bottom-2 text-[10px] text-rose-500 opacity-0 group-hover/doc-comment:opacity-100 transition-opacity font-semibold">
+                                                    Excluir
+                                                </button>
+                                            }
+                                        </div>
+                                    }
+                                }
+                            </div>
+
+                            <div class="flex gap-2">
+                                <input type="text" placeholder="Adicionar comentário ao documento..." @bind="novoComentarioDocumento"
+                                       class="flex-1 text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500 bg-white" />
+                                <button @onclick="AdicionarComentarioDocumento" class="px-3 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 transition-colors">
+                                    Enviar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public int ProcessoId { get; set; }
+
+    private bool carregando = true;
+    private Processo? processo;
+    private List<TimelineEvent> timelineEvents = [];
+    private Documento? documentoSelecionado;
+
+    // Signature form
+    private string usuarioAssinatura = "";
+    private string senhaAssinatura = "";
+    private string erroAssinatura = "";
+    private string sucessoAssinatura = "";
+    private bool processandoAssinatura = false;
+
+    // Comments variables
+    private int? activeUsuarioId;
+    private int? activeUnidadeId;
+    private List<Comentario> comentariosProcesso = [];
+    private List<Comentario> comentariosDocumento = [];
+    private string novoComentarioProcesso = "";
+    private string novoComentarioDocumento = "";
+
+    // SLA variables
+    private ControlePrazo? activeDeadline;
+    private int? diasRestantes;
+    private bool definindoPrazo = false;
+    private DateTime inputDataLimite = DateTime.Today.AddDays(7);
+    private bool inputDiasUteis = true;
+    private string mensagemErroPrazo = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Pre-fill user login if authenticated
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        usuarioAssinatura = user.FindFirst("login")?.Value ?? user.Identity?.Name ?? "";
+
+        var login = user.FindFirst("login")?.Value ?? user.Identity?.Name ?? "admin";
+        var usuarioDb = await Db.Usuarios
+            .Include(u => u.Unidades)
+            .FirstOrDefaultAsync(u => u.Login == login);
+        if (usuarioDb == null)
+        {
+            usuarioDb = await Db.Usuarios.Include(u => u.Unidades).FirstOrDefaultAsync();
+        }
+        if (usuarioDb != null)
+        {
+            activeUsuarioId = usuarioDb.Id;
+            var uni = usuarioDb.Unidades.FirstOrDefault();
+            activeUnidadeId = uni?.Id ?? (await Db.Unidades.FirstOrDefaultAsync())?.Id;
+        }
+        
+        await CarregarDadosProcesso();
+        await CarregarComentarios();
+        await CarregarPrazo();
+    }
+
+    private async Task CarregarDadosProcesso()
+    {
+        carregando = true;
+        try
+        {
+            processo = await DocumentoService.ObterProcessoComDocumentosAsync(ProcessoId);
+            if (processo != null)
+            {
+                ConstruirTimeline();
+            }
+        }
+        catch (Exception ex)
+        {
+            erroAssinatura = $"Erro ao carregar processo: {ex.Message}";
+        }
+        finally
+        {
+            carregando = false;
+        }
+    }
+
+    private async Task CarregarComentarios()
+    {
+        if (activeUsuarioId.HasValue && activeUnidadeId.HasValue)
+        {
+            comentariosProcesso = await ComentarioService.ObterComentariosDoProcessoAsync(ProcessoId, activeUsuarioId.Value, activeUnidadeId.Value);
+            
+            if (documentoSelecionado != null)
+            {
+                comentariosDocumento = await ComentarioService.ObterComentariosDoDocumentoAsync(documentoSelecionado.Id, activeUsuarioId.Value, activeUnidadeId.Value);
+            }
+            else
+            {
+                comentariosDocumento.Clear();
+            }
+        }
+    }
+
+    private void ConstruirTimeline()
+    {
+        if (processo == null) return;
+
+        var events = new List<TimelineEvent>
+        {
+            new TimelineEvent
+            {
+                Date = processo.CriadoEm,
+                Title = "Processo Aberto",
+                Description = $"Processo nº {processo.NumeroSequencial} autuado por {processo.Usuario?.Nome ?? "Servidor"}.",
+                Type = "process_created"
+            }
+        };
+
+        if (processo.Documentos != null)
+        {
+            foreach (var doc in processo.Documentos)
+            {
+                events.Add(new TimelineEvent
+                {
+                    Date = doc.CriadoEm,
+                    Title = $"Novo Rascunho: {doc.Titulo}",
+                    Description = $"Rascunho de documento criado no processo.",
+                    Type = "document_created",
+                    Document = doc
+                });
+
+                foreach (var ass in doc.Assinaturas)
+                {
+                    events.Add(new TimelineEvent
+                    {
+                        Date = ass.AssinadoEm,
+                        Title = $"Documento Assinado: {doc.Titulo}",
+                        Description = $"Assinado eletronicamente por {ass.Usuario?.Nome ?? "Servidor"}.",
+                        Type = "document_signed",
+                        Document = doc,
+                        Signature = ass
+                    });
+                }
+            }
+        }
+
+        timelineEvents = events.OrderBy(e => e.Date).ToList();
+    }
+
+    private async Task OnEventClicked(TimelineEvent ev)
+    {
+        if (ev.Document != null)
+        {
+            await SelecionarDocumento(ev.Document);
+        }
+    }
+
+    private async Task SelecionarDocumento(Documento doc)
+    {
+        documentoSelecionado = await DocumentoService.ObterDocumentoPorIdAsync(doc.Id);
+        erroAssinatura = "";
+        sucessoAssinatura = "";
+        senhaAssinatura = "";
+        resumoIa = "";
+        gerandoResumo = false;
+        await CarregarComentarios();
+    }
+
+    private async Task ExecutarAssinatura()
+    {
+        if (documentoSelecionado == null) return;
+
+        if (string.IsNullOrWhiteSpace(usuarioAssinatura) || string.IsNullOrWhiteSpace(senhaAssinatura))
+        {
+            erroAssinatura = "Usuário e senha são obrigatórios para a assinatura.";
+            return;
+        }
+
+        try
+        {
+            processandoAssinatura = true;
+            erroAssinatura = "";
+            sucessoAssinatura = "";
+
+            var sucesso = await DocumentoService.AssinarDocumentoAsync(documentoSelecionado.Id, usuarioAssinatura, senhaAssinatura);
+            if (sucesso)
+            {
+                sucessoAssinatura = "Documento assinado eletronicamente! PDF gerado e armazenado com sucesso.";
+                
+                // Recarregar os dados do processo
+                await CarregarDadosProcesso();
+
+                // Atualizar o documento atualmente exibido
+                documentoSelecionado = await DocumentoService.ObterDocumentoPorIdAsync(documentoSelecionado.Id);
+                await CarregarComentarios();
+            }
+            else
+            {
+                erroAssinatura = "Credenciais inválidas no LDAP. Por favor, tente novamente.";
+            }
+        }
+        catch (Exception ex)
+        {
+            erroAssinatura = $"Erro ao assinar documento: {ex.Message}";
+        }
+        finally
+        {
+            processandoAssinatura = false;
+        }
+    }
+
+    // IA summary variables and methods
+    private string resumoIa = "";
+    private bool gerandoResumo = false;
+
+    private async Task GerarResumo()
+    {
+        if (documentoSelecionado == null) return;
+        
+        gerandoResumo = true;
+        resumoIa = "";
+        StateHasChanged();
+        
+        try
+        {
+            resumoIa = await AssistenteService.SumarizarTextoAsync(documentoSelecionado.ConteudoHtml);
+        }
+        catch (Exception ex)
+        {
+            resumoIa = $"Erro ao tentar gerar resumo: {ex.Message}";
+        }
+        finally
+        {
+            gerandoResumo = false;
+        }
+    }
+
+    private string ConverterMarkdownParaHtml(string markdown)
+    {
+        if (string.IsNullOrEmpty(markdown)) return "";
+        
+        var html = System.Net.WebUtility.HtmlEncode(markdown);
+        
+        // Substituição básica de negrito **texto** -> <b>texto</b>
+        html = System.Text.RegularExpressions.Regex.Replace(html, @"\*\*(.*?)\*\*", "<b>$1</b>");
+        
+        // Substituição básica de tópicos - ou * -> <li>texto</li>
+        html = System.Text.RegularExpressions.Regex.Replace(html, @"^\s*[-*]\s+(.*?)$", "<li>$1</li>", System.Text.RegularExpressions.RegexOptions.Multiline);
+        
+        if (html.Contains("<li>"))
+        {
+            html = System.Text.RegularExpressions.Regex.Replace(html, @"(<li>.*?</li>\s*)+", "<ul>$0</ul>");
+        }
+        
+        html = html.Replace("\n", "<br/>");
+        return html;
+    }
+
+    private async Task AdicionarComentarioProcesso()
+    {
+        if (string.IsNullOrWhiteSpace(novoComentarioProcesso) || !activeUsuarioId.HasValue || !activeUnidadeId.HasValue) return;
+
+        try
+        {
+            await ComentarioService.CriarComentarioProcessoAsync(ProcessoId, novoComentarioProcesso.Trim(), activeUsuarioId.Value, activeUnidadeId.Value);
+            novoComentarioProcesso = "";
+            await CarregarComentarios();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Erro ao adicionar comentário ao processo: {ex.Message}");
+        }
+    }
+
+    private async Task AdicionarComentarioDocumento()
+    {
+        if (documentoSelecionado == null || string.IsNullOrWhiteSpace(novoComentarioDocumento) || !activeUsuarioId.HasValue || !activeUnidadeId.HasValue) return;
+
+        try
+        {
+            await ComentarioService.CriarComentarioDocumentoAsync(documentoSelecionado.Id, novoComentarioDocumento.Trim(), activeUsuarioId.Value, activeUnidadeId.Value);
+            novoComentarioDocumento = "";
+            await CarregarComentarios();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Erro ao adicionar comentário ao documento: {ex.Message}");
+        }
+    }
+
+    private async Task ExcluirComentario(int id)
+    {
+        if (!activeUnidadeId.HasValue) return;
+
+        try
+        {
+            var ok = await ComentarioService.ExcluirComentarioAsync(id, activeUnidadeId.Value);
+            if (ok)
+            {
+                await CarregarComentarios();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Erro ao excluir comentário: {ex.Message}");
+        }
+    }
+
+    private async Task CarregarPrazo()
+    {
+        if (activeUnidadeId.HasValue)
+        {
+            activeDeadline = await ControlePrazoService.ObterPrazoAtivoProcessoUnidadeAsync(ProcessoId, activeUnidadeId.Value);
+            if (activeDeadline != null)
+            {
+                diasRestantes = await SlaCalculator.CalcularDiasRestantesAsync(activeDeadline.DataLimite, activeDeadline.DiasUteis);
+            }
+            else
+            {
+                diasRestantes = null;
+            }
+        }
+    }
+
+    private void AlternarInputDiasUteis()
+    {
+        inputDiasUteis = !inputDiasUteis;
+    }
+
+    private async Task CriarNovoPrazo()
+    {
+        mensagemErroPrazo = string.Empty;
+
+        if (inputDataLimite.Date < DateTime.Today)
+        {
+            mensagemErroPrazo = "A data limite não pode ser anterior a hoje.";
+            return;
+        }
+
+        if (activeUsuarioId.HasValue && activeUnidadeId.HasValue)
+        {
+            await ControlePrazoService.CriarPrazoAsync(
+                ProcessoId,
+                activeUnidadeId.Value,
+                inputDataLimite,
+                inputDiasUteis,
+                activeUsuarioId.Value
+            );
+
+            definindoPrazo = false;
+            await CarregarPrazo();
+        }
+    }
+
+    private async Task ConcluirPrazo()
+    {
+        if (activeDeadline != null && activeUsuarioId.HasValue)
+        {
+            await ControlePrazoService.ConcluirPrazoAsync(activeDeadline.Id, activeUsuarioId.Value);
+            await CarregarPrazo();
+        }
+    }
+
+    private async Task RemoverPrazo()
+    {
+        if (activeDeadline != null)
+        {
+            await ControlePrazoService.RemoverPrazoAsync(activeDeadline.Id);
+            await CarregarPrazo();
+        }
+    }
+
+    public class TimelineEvent
+    {
+        public DateTime Date { get; set; }
+        public string Title { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string Type { get; set; } = ""; // "process_created", "document_created", "document_signed"
+        public Documento? Document { get; set; }
+        public Assinatura? Signature { get; set; }
+    }
+}

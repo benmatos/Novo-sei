@@ -1,0 +1,47 @@
+## Build Artifacts
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## Visual Studio & VS Code User Files
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+.idea/
+*.swp
+
+## Operating System Files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+## .NET Core / ASP.NET Local Configurations
+appsettings.Local.json
+appsettings.local.json
+secrets.json
+.microsoft/usersecrets/
+
+## Publish Outputs
+*.publish.xml
+publish/
+artifacts/
+
+## Test Results and Coverage
+TestResults/
+*.clog
+*.cobertura.xml
+*.coverage
+
+## Browser Automation Caches (Puppeteer / Playwright)
+.local-browser/
+.local-chromium/
+
+## Package Directories
+.nuget/
+packages/

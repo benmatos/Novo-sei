@@ -24,4 +24,16 @@ public class UsuarioRepository(ApplicationDbContext db) : IUsuarioRepository
             .Where(u => u.Id == usuarioId)
             .ExecuteUpdateAsync(s => s.SetProperty(u => u.UltimoAcessoEm, DateTime.UtcNow));
     }
+
+    public async Task Atualizar2FaAsync(int usuarioId, bool habilitado, string? segredo, string? emailAlternativo, string? tokenAtivacao, DateTime? expiracao)
+    {
+        await db.Usuarios
+            .Where(u => u.Id == usuarioId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(u => u.DoisFatoresHabilitado, habilitado)
+                .SetProperty(u => u.Segredo2Fa, segredo)
+                .SetProperty(u => u.EmailAlternativo, emailAlternativo)
+                .SetProperty(u => u.Token2FaAtivacao, tokenAtivacao)
+                .SetProperty(u => u.TokenEmailExpiracao, expiracao));
+    }
 }

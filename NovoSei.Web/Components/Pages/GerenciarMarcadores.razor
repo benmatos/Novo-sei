@@ -1,0 +1,381 @@
+@page "/marcadores"
+@using Microsoft.EntityFrameworkCore
+@using NovoSei.Core.Entities
+@using NovoSei.Infrastructure.Data
+@using NovoSei.Core.Interfaces
+@using Microsoft.AspNetCore.Components.Authorization
+@inject IMarcadorService MarcadorService
+@inject ApplicationDbContext Db
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Navigation
+@rendermode InteractiveServer
+
+<div class="container mx-auto p-6 max-w-7xl">
+    <!-- Breadcrumb & Header -->
+    <div class="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+        <div>
+            <div class="flex items-center space-x-2 text-sm text-slate-500 mb-2">
+                <a href="/" class="hover:text-indigo-600 transition-colors">Caixa de Entrada</a>
+                <span>/</span>
+                <span class="text-slate-700 font-medium">Gerenciar Marcadores</span>
+            </div>
+            <h2 class="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                <span>🏷️</span> Marcadores da Unidade
+            </h2>
+            <p class="text-slate-600 mt-1 font-light">
+                Crie e configure etiquetas coloridas personalizadas para organizar os processos de sua unidade.
+            </p>
+        </div>
+        <div>
+            <a href="/" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-bold text-sm flex items-center gap-1.5 shadow-sm">
+                <span>↩</span> Voltar à Caixa de Entrada
+            </a>
+        </div>
+    </div>
+
+    @if (carregando)
+    {
+        <div class="flex flex-col items-center justify-center min-h-[400px] bg-white border border-slate-200 rounded-xl shadow-sm">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+            <p class="text-slate-600 font-medium">Carregando marcadores...</p>
+        </div>
+    }
+    else
+    {
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <!-- Left Side: List of Markers -->
+            <div class="lg:col-span-7 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+                <div class="px-5 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                    <h3 class="font-extrabold text-slate-800 flex items-center gap-2 text-sm uppercase tracking-wider">
+                        <span>📋</span> Marcadores Cadastrados (@marcadores.Count)
+                    </h3>
+                </div>
+
+                <div class="p-5 flex-grow">
+                    @if (mensagemSucesso != null)
+                    {
+                        <div class="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-xs font-semibold flex items-center gap-2">
+                            <span>✅</span> @mensagemSucesso
+                        </div>
+                    }
+                    @if (mensagemErro != null)
+                    {
+                        <div class="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg text-xs font-semibold flex items-center gap-2">
+                            <span>⚠️</span> @mensagemErro
+                        </div>
+                    }
+
+                    @if (marcadores.Count == 0)
+                    {
+                        <div class="text-center p-12 bg-slate-50 border border-slate-200 border-dashed rounded-xl">
+                            <span class="text-4xl mb-2 block">🏷️</span>
+                            <h4 class="text-sm font-bold text-slate-700">Nenhum marcador criado</h4>
+                            <p class="text-slate-500 text-xs mt-1">Utilize o painel lateral para criar o primeiro marcador de sua unidade.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-slate-100">
+                                <thead class="bg-slate-50">
+                                    <tr>
+                                        <th class="px-4 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Etiqueta</th>
+                                        <th class="px-4 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Nome</th>
+                                        <th class="px-4 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
+                                        <th class="px-4 py-2.5 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Ações</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100 bg-white">
+                                    @foreach (var m in marcadores)
+                                    {
+                                        <tr class="hover:bg-slate-50/50 transition-colors">
+                                            <td class="px-4 py-3 whitespace-nowrap">
+                                                <span class="inline-block w-4 h-4 rounded-full border border-slate-300" style="background-color: @m.CorHex;"></span>
+                                            </td>
+                                            <td class="px-4 py-3 whitespace-nowrap text-xs font-bold text-slate-900">
+                                                @m.Nome
+                                            </td>
+                                            <td class="px-4 py-3 whitespace-nowrap text-xs">
+                                                <span class="inline-block px-2 py-0.5 rounded border text-[10px] font-bold uppercase @(m.Ativo ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-slate-100 text-slate-500 border-slate-200")">
+                                                    @(m.Ativo ? "Ativo" : "Inativo")
+                                                </span>
+                                            </td>
+                                            <td class="px-4 py-3 whitespace-nowrap text-right text-xs space-x-1.5">
+                                                <button @onclick="() => IniciarEdicao(m)" class="px-2.5 py-1 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 rounded font-semibold text-[11px] transition-all">
+                                                    ✏️ Editar
+                                                </button>
+                                                <button @onclick="() => AlternarStatus(m)" class="px-2.5 py-1 @(m.Ativo ? "bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200" : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200") border rounded font-semibold text-[11px] transition-all">
+                                                    @(m.Ativo ? "🚫 Desativar" : "⚡ Reativar")
+                                                </button>
+                                                <button @onclick="() => ExcluirMarcador(m.Id)" class="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded font-semibold text-[11px] transition-all">
+                                                    🗑️ Excluir
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <!-- Right Side: Create or Edit Marker Panel -->
+            <div class="lg:col-span-5 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <div class="px-5 py-4 border-b border-slate-100 bg-slate-50">
+                    <h3 class="font-extrabold text-slate-800 flex items-center gap-2 text-sm uppercase tracking-wider">
+                        <span>@(editandoId.HasValue ? "✏️ Editar Marcador" : "➕ Novo Marcador")</span>
+                    </h3>
+                </div>
+
+                <div class="p-5 space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">Nome do Marcador</label>
+                        <input type="text" @bind="formNome" placeholder="Ex: Urgente, Revisão, Fiscalização" 
+                               class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500 transition-colors" />
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">Cor da Etiqueta</label>
+                        <div class="grid grid-cols-4 gap-2.5">
+                            @foreach (var cor in coresDisponiveis)
+                            {
+                                <button type="button" @onclick="() => formCor = cor" 
+                                        class="h-10 rounded-lg border-2 @(formCor == cor ? "border-indigo-600 scale-105 shadow-sm" : "border-transparent hover:scale-102") transition-all" 
+                                        style="background-color: @cor;"></button>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-slate-100 flex justify-end gap-2">
+                        @if (editandoId.HasValue)
+                        {
+                            <button @onclick="CancelarEdicao" class="px-3.5 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors text-xs font-bold">
+                                Cancelar
+                            </button>
+                        }
+                        <button @onclick="SalvarMarcador" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-xs font-bold">
+                            @(editandoId.HasValue ? "Salvar Alterações" : "Criar Marcador")
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private bool carregando = true;
+    private int? activeUnidadeId;
+    private int? activeUsuarioId;
+    
+    private List<Marcador> marcadores = [];
+    
+    // Form fields
+    private int? editandoId;
+    private string formNome = string.Empty;
+    private string formCor = "#6366F1"; // Default Indigo
+
+    private string? mensagemSucesso;
+    private string? mensagemErro;
+
+    // Palette of standard premium colors for tags
+    private readonly string[] coresDisponiveis = new[]
+    {
+        "#6366F1", // Indigo
+        "#10B981", // Emerald/Green
+        "#EF4444", // Red
+        "#F59E0B", // Amber/Gold
+        "#0EA5E9", // Sky Blue
+        "#A855F7", // Purple
+        "#EC4899", // Pink
+        "#64748B"  // Slate Gray
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CarregarContextoEUnit();
+    }
+
+    private async Task CarregarContextoEUnit()
+    {
+        carregando = true;
+        mensagemSucesso = null;
+        mensagemErro = null;
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var userClaims = authState.User;
+            var login = userClaims.FindFirst("login")?.Value ?? userClaims.Identity?.Name ?? "admin";
+
+            var user = await Db.Usuarios
+                .Include(u => u.Unidades)
+                .FirstOrDefaultAsync(u => u.Login == login);
+
+            if (user == null)
+            {
+                user = await Db.Usuarios.Include(u => u.Unidades).FirstOrDefaultAsync();
+            }
+
+            if (user != null)
+            {
+                activeUsuarioId = user.Id;
+                var unidade = user.Unidades.FirstOrDefault();
+                if (unidade == null)
+                {
+                    // Fallback se não tiver unidade mapeada
+                    var uDb = await Db.Unidades.FirstOrDefaultAsync();
+                    activeUnidadeId = uDb?.Id;
+                }
+                else
+                {
+                    activeUnidadeId = unidade.Id;
+                }
+            }
+
+            if (activeUnidadeId.HasValue)
+            {
+                marcadores = await MarcadorService.ObterMarcadoresDaUnidadeAsync(activeUnidadeId.Value);
+            }
+        }
+        catch (Exception ex)
+        {
+            mensagemErro = $"Erro ao carregar marcadores: {ex.Message}";
+        }
+        finally
+        {
+            carregando = false;
+        }
+    }
+
+    private async Task SalvarMarcador()
+    {
+        mensagemSucesso = null;
+        mensagemErro = null;
+
+        if (string.IsNullOrWhiteSpace(formNome))
+        {
+            mensagemErro = "O nome do marcador não pode estar vazio.";
+            return;
+        }
+
+        if (!activeUnidadeId.HasValue)
+        {
+            mensagemErro = "Contexto da unidade ativa não identificado.";
+            return;
+        }
+
+        try
+        {
+            if (editandoId.HasValue)
+            {
+                var ok = await MarcadorService.AtualizarMarcadorAsync(editandoId.Value, formNome.Trim(), formCor);
+                if (ok)
+                {
+                    mensagemSucesso = "Marcador atualizado com sucesso!";
+                    CancelarEdicao();
+                }
+                else
+                {
+                    mensagemErro = "Não foi possível atualizar o marcador.";
+                }
+            }
+            else
+            {
+                var marcador = await MarcadorService.CriarMarcadorAsync(activeUnidadeId.Value, formNome.Trim(), formCor);
+                if (marcador != null)
+                {
+                    mensagemSucesso = "Marcador criado com sucesso!";
+                    formNome = string.Empty;
+                    formCor = coresDisponiveis.First();
+                }
+                else
+                {
+                    mensagemErro = "Não foi possível criar o marcador.";
+                }
+            }
+
+            // Recarregar lista
+            marcadores = await MarcadorService.ObterMarcadoresDaUnidadeAsync(activeUnidadeId.Value);
+        }
+        catch (Exception ex)
+        {
+            mensagemErro = $"Erro ao salvar: {ex.Message}";
+        }
+    }
+
+    private void IniciarEdicao(Marcador m)
+    {
+        editandoId = m.Id;
+        formNome = m.Nome;
+        formCor = m.CorHex;
+        mensagemSucesso = null;
+        mensagemErro = null;
+    }
+
+    private void CancelarEdicao()
+    {
+        editandoId = null;
+        formNome = string.Empty;
+        formCor = coresDisponiveis.First();
+        mensagemSucesso = null;
+        mensagemErro = null;
+    }
+
+    private async Task AlternarStatus(Marcador m)
+    {
+        mensagemSucesso = null;
+        mensagemErro = null;
+
+        try
+        {
+            var ok = await MarcadorService.AlternarAtivoMarcadorAsync(m.Id, !m.Ativo);
+            if (ok)
+            {
+                mensagemSucesso = $"Marcador {(m.Ativo ? "desativado" : "reativado")} com sucesso!";
+                if (activeUnidadeId.HasValue)
+                {
+                    marcadores = await MarcadorService.ObterMarcadoresDaUnidadeAsync(activeUnidadeId.Value);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            mensagemErro = $"Erro ao alternar status: {ex.Message}";
+        }
+    }
+
+    private async Task ExcluirMarcador(int id)
+    {
+        mensagemSucesso = null;
+        mensagemErro = null;
+
+        try
+        {
+            var ok = await MarcadorService.ExcluirMarcadorAsync(id);
+            if (ok)
+            {
+                mensagemSucesso = "Marcador excluído com sucesso!";
+                if (activeUnidadeId.HasValue)
+                {
+                    marcadores = await MarcadorService.ObterMarcadoresDaUnidadeAsync(activeUnidadeId.Value);
+                }
+                
+                if (editandoId == id)
+                {
+                    CancelarEdicao();
+                }
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Mensagem amigável de restrição de integridade referencial do SEI 4.0
+            mensagemErro = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            mensagemErro = $"Erro ao excluir: {ex.Message}";
+        }
+    }
+}

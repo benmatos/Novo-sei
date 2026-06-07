@@ -1,0 +1,362 @@
+@page "/processo/{ProcessoId:int}/auditoria"
+@using NovoSei.Core.Interfaces
+@inject IDocumentoService DocumentoService
+@inject NavigationManager Navigation
+@rendermode InteractiveServer
+
+<div class="container mx-auto p-6 max-w-7xl">
+    <!-- Breadcrumb & Header -->
+    <div class="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+        <div>
+            <div class="flex items-center space-x-2 text-sm text-slate-500 mb-2">
+                <a href="/" class="hover:text-indigo-600 transition-colors">Caixa de Entrada</a>
+                <span>/</span>
+                <a href="/processo/@ProcessoId" class="hover:text-indigo-600 transition-colors">Processo nº @(processoNumero ?? ProcessoId.ToString())</a>
+                <span>/</span>
+                <span class="text-slate-700 font-medium">Histórico de Auditoria</span>
+            </div>
+            <h2 class="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                <span>🛡️</span> Rastreabilidade Temporal (Audit Trail)
+            </h2>
+            <p class="text-slate-600 mt-1 font-light">
+                Histórico completo e imutável de alterações do processo e seus documentos, obtidos diretamente através de <i>System-Versioned Temporal Tables</i>.
+            </p>
+        </div>
+        <div>
+            <a href="/processo/@ProcessoId" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-bold text-sm flex items-center gap-1">
+                <span>↩</span> Voltar ao Processo
+            </a>
+        </div>
+    </div>
+
+    @if (carregando)
+    {
+        <div class="flex flex-col items-center justify-center min-h-[400px] bg-white border border-slate-200 rounded-xl shadow-sm">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+            <p class="text-slate-600 font-medium">Carregando histórico de auditoria...</p>
+        </div>
+    }
+    else
+    {
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <!-- Left Side: Process History & Document Select -->
+            <div class="lg:col-span-5 space-y-6">
+                <!-- Process Version History -->
+                <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                    <div class="px-5 py-4 border-b border-slate-100 bg-slate-50">
+                        <h3 class="font-extrabold text-slate-800 flex items-center gap-2 text-sm uppercase tracking-wider">
+                            <span>📂</span> Versões do Processo
+                        </h3>
+                    </div>
+                    <div class="p-5 max-h-[350px] overflow-y-auto">
+                        <div class="space-y-4">
+                            @foreach (var v in versoesProcesso)
+                            {
+                                <div class="border border-slate-100 rounded-lg p-3 hover:bg-slate-50/50 transition-all">
+                                    <div class="flex items-center justify-between mb-1.5">
+                                        <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded @(v.Status == "Aberto" ? "bg-indigo-50 text-indigo-700 border border-indigo-100" : "bg-slate-100 text-slate-600 border border-slate-200")">
+                                            @v.Status
+                                        </span>
+                                        <span class="text-[10px] text-slate-400 font-medium font-mono">
+                                            @v.PeriodStart.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss")
+                                        </span>
+                                    </div>
+                                    <h4 class="font-bold text-xs text-slate-800">Assunto: @v.Assunto</h4>
+                                    <div class="text-[11px] text-slate-500 mt-2 flex justify-between">
+                                        <span><b>Responsável:</b> @v.UsuarioNome</span>
+                                        @if (v.PeriodEnd == DateTime.MaxValue)
+                                        {
+                                            <span class="text-emerald-600 font-semibold">Atual (Ativa)</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-slate-400">Modificado</span>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Documents Select Panel -->
+                <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                    <div class="px-5 py-4 border-b border-slate-100 bg-slate-50">
+                        <h3 class="font-extrabold text-slate-800 flex items-center gap-2 text-sm uppercase tracking-wider">
+                            <span>📄</span> Selecionar Documento para Auditoria
+                        </h3>
+                    </div>
+                    <div class="p-5 space-y-3">
+                        @if (documentosProcesso.Count == 0)
+                        {
+                            <p class="text-xs text-slate-500 font-light">Este processo não possui documentos cadastrados.</p>
+                        }
+                        else
+                        {
+                            @foreach (var doc in documentosProcesso)
+                            {
+                                <button @onclick="() => SelecionarDocumento(doc.Id, doc.Titulo)"
+                                        class="w-full text-left px-4 py-3 border @(documentoSelecionadoId == doc.Id ? "border-indigo-400 bg-indigo-50/20 text-indigo-900 font-bold" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700") rounded-lg transition-all text-xs flex items-center justify-between">
+                                    <span class="truncate pr-2">@doc.Titulo</span>
+                                    <span class="text-[10px] px-2 py-0.5 rounded border uppercase @(doc.Status == "Assinado" ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-amber-50 text-amber-700 border-amber-100")">
+                                        @doc.Status
+                                    </span>
+                                </button>
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Side: Selected Document Audit Trail -->
+            <div class="lg:col-span-7 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden min-h-[500px]">
+                <div class="px-5 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                    <h3 class="font-extrabold text-slate-800 flex items-center gap-2 text-sm uppercase tracking-wider">
+                        <span>🛡️</span> Linha do Tempo de Versões: @(documentoSelecionadoTitulo ?? "Nenhum Documento")
+                    </h3>
+                </div>
+
+                @if (documentoSelecionadoId == 0)
+                {
+                    <div class="p-12 text-center flex flex-col items-center justify-center min-h-[400px]">
+                        <span class="text-5xl mb-4">🔍</span>
+                        <h3 class="text-sm font-bold text-slate-700">Selecione um documento</h3>
+                        <p class="text-slate-500 text-xs mt-1 max-w-xs">
+                            Selecione um dos documentos do processo na barra lateral para ver o histórico completo de edições, alteração de status e hashes de assinatura.
+                        </p>
+                    </div>
+                }
+                else if (carregandoHistoricoDoc)
+                {
+                    <div class="p-12 text-center flex flex-col items-center justify-center min-h-[400px]">
+                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mb-2"></div>
+                        <p class="text-slate-500 text-xs">Carregando versões do documento...</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="p-6 space-y-6">
+                        <div class="space-y-4">
+                            @foreach (var v in versoesDocumento)
+                            {
+                                var isExibido = versaoExibida != null && versaoExibida.PeriodStart == v.PeriodStart;
+                                
+                                <div class="border @(isExibido ? "border-indigo-400 shadow-sm" : "border-slate-200") rounded-xl overflow-hidden transition-all duration-200">
+                                    <div class="bg-slate-50/80 px-4 py-3 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 cursor-pointer"
+                                         @onclick="() => ExibirVersao(v)">
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border @(v.Status == "Assinado" ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-amber-50 text-amber-700 border-amber-100")">
+                                                @v.Status
+                                            </span>
+                                            <h4 class="font-bold text-xs text-slate-800 truncate max-w-[200px]">@v.Titulo</h4>
+                                        </div>
+                                        <div class="text-[10px] text-slate-500 flex items-center gap-2">
+                                            <span class="font-mono">Início: @v.PeriodStart.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss")</span>
+                                            <span class="font-mono bg-slate-200 px-1 py-0.5 rounded text-slate-600">
+                                                @(v.PeriodEnd == DateTime.MaxValue ? "Ativa" : "Histórico")
+                                            </span>
+                                        </div>
+                                    </div>
+                                    
+                                    @if (isExibido)
+                                    {
+                                        <div class="p-5 bg-white space-y-4 border-t border-slate-100/50">
+                                            <div class="grid grid-cols-2 gap-4 text-xs bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                                <div>
+                                                    <span class="text-slate-400">Unidade Geradora:</span>
+                                                    <div class="font-bold text-slate-800 mt-0.5">@(v.UnidadeSigla ?? "Não informada")</div>
+                                                </div>
+                                                <div>
+                                                    <span class="text-slate-400">Validade do Registro:</span>
+                                                    <div class="font-mono text-slate-800 mt-0.5">
+                                                        @v.PeriodStart.ToLocalTime().ToString("dd/MM/yy HH:mm:ss") até 
+                                                        @(v.PeriodEnd == DateTime.MaxValue ? "Presente" : v.PeriodEnd.ToLocalTime().ToString("dd/MM/yy HH:mm:ss"))
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div>
+                                                <div class="flex items-center justify-between mb-2">
+                                                    <h5 class="text-xs font-bold text-slate-700">Conteúdo do Documento nesta Versão:</h5>
+                                                    @{
+                                                        var idx = versoesDocumento.FindIndex(vd => vd.PeriodStart == v.PeriodStart);
+                                                        var temAnterior = idx >= 0 && idx < versoesDocumento.Count - 1;
+                                                    }
+                                                    <button @onclick="AlternarDiff" class="px-3 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-xs font-bold rounded transition-colors flex items-center gap-1">
+                                                        @if (exibirDiff)
+                                                        {
+                                                            <span>📄 Ver Texto Normal</span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span>🔄 Ver Alterações @(temAnterior ? "(Diff)" : "(Nova Versão)")</span>
+                                                        }
+                                                    </button>
+                                                </div>
+
+                                                @if (exibirDiff)
+                                                {
+                                                    <div class="border border-slate-200 rounded-lg p-4 max-h-[300px] overflow-y-auto bg-slate-950 font-mono text-xs text-slate-100 space-y-1">
+                                                        @if (diffLines.Count == 0)
+                                                        {
+                                                            <div class="text-slate-500 italic">Nenhuma linha alterada.</div>
+                                                        }
+                                                        else
+                                                        {
+                                                            @foreach (var line in diffLines)
+                                                            {
+                                                                @if (line.Type == NovoSei.Core.Services.DiffType.Inserted)
+                                                                {
+                                                                    <div class="bg-emerald-950/70 text-emerald-300 px-2 py-0.5 border-l-4 border-emerald-500 font-medium">+ @line.Text</div>
+                                                                }
+                                                                else if (line.Type == NovoSei.Core.Services.DiffType.Deleted)
+                                                                {
+                                                                    <div class="bg-rose-950/70 text-rose-300 px-2 py-0.5 border-l-4 border-rose-500 font-medium">- @line.Text</div>
+                                                                }
+                                                                else
+                                                                {
+                                                                    <div class="text-slate-400 px-2 py-0.5 border-l-4 border-transparent">  @line.Text</div>
+                                                                }
+                                                            }
+                                                        }
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div class="border border-slate-200 rounded-lg p-5 max-h-[300px] overflow-y-auto bg-slate-50/50 text-xs prose prose-slate">
+                                                        @((MarkupString)v.ConteudoHtml)
+                                                    </div>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public int ProcessoId { get; set; }
+
+    private bool carregando = true;
+    private string? processoNumero;
+    
+    // Process versions
+    private List<ProcessoVersaoDto> versoesProcesso = [];
+    
+    // Documents list in process
+    private List<Documento> documentosProcesso = [];
+
+    // Document audit variables
+    private int documentoSelecionadoId = 0;
+    private string? documentoSelecionadoTitulo;
+    private bool carregandoHistoricoDoc = false;
+    private List<DocumentoVersaoDto> versoesDocumento = [];
+    private DocumentoVersaoDto? versaoExibida;
+    private bool exibirDiff = false;
+    private List<NovoSei.Core.Services.DiffLine> diffLines = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CarregarDadosAuditoria();
+    }
+
+    private async Task CarregarDadosAuditoria()
+    {
+        carregando = true;
+        try
+        {
+            var proc = await DocumentoService.ObterProcessoComDocumentosAsync(ProcessoId);
+            if (proc != null)
+            {
+                processoNumero = proc.NumeroSequencial;
+                documentosProcesso = proc.Documentos.ToList();
+                
+                // Obter histórico temporal do processo
+                versoesProcesso = await DocumentoService.ObterHistoricoProcessoAsync(ProcessoId);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Erro ao carregar dados de auditoria: {ex.Message}");
+        }
+        finally
+        {
+            carregando = false;
+        }
+    }
+
+    private async Task SelecionarDocumento(int docId, string titulo)
+    {
+        documentoSelecionadoId = docId;
+        documentoSelecionadoTitulo = titulo;
+        carregandoHistoricoDoc = true;
+        versaoExibida = null;
+        exibirDiff = false;
+        diffLines.Clear();
+        
+        try
+        {
+            versoesDocumento = await DocumentoService.ObterHistoricoDocumentoAsync(docId);
+            if (versoesDocumento.Any())
+            {
+                versaoExibida = versoesDocumento.First(); // Exibir a versão mais recente/ativa por padrão
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Erro ao carregar histórico do documento: {ex.Message}");
+        }
+        finally
+        {
+            carregandoHistoricoDoc = false;
+        }
+    }
+
+    private void ExibirVersao(DocumentoVersaoDto v)
+    {
+        if (versaoExibida != null && versaoExibida.PeriodStart == v.PeriodStart)
+        {
+            versaoExibida = null; // Recolhe se clicar de novo
+            exibirDiff = false;
+            diffLines.Clear();
+        }
+        else
+        {
+            versaoExibida = v;
+            exibirDiff = false;
+            diffLines.Clear();
+        }
+    }
+
+    private void AlternarDiff()
+    {
+        if (exibirDiff)
+        {
+            exibirDiff = false;
+            diffLines.Clear();
+            return;
+        }
+
+        if (versaoExibida == null) return;
+
+        int idx = versoesDocumento.FindIndex(v => v.PeriodStart == versaoExibida.PeriodStart);
+        if (idx >= 0 && idx < versoesDocumento.Count - 1)
+        {
+            var versaoAnterior = versoesDocumento[idx + 1];
+            diffLines = NovoSei.Core.Services.DiffHelper.GenerateDiff(versaoAnterior.ConteudoHtml, versaoExibida.ConteudoHtml);
+            exibirDiff = true;
+        }
+        else
+        {
+            exibirDiff = true;
+            diffLines = NovoSei.Core.Services.DiffHelper.GenerateDiff("", versaoExibida.ConteudoHtml);
+        }
+    }
+}

@@ -16,5 +16,9 @@ public class Documento
     public int TemplateDocumentoId { get; set; }
     public TemplateDocumento TemplateDocumento { get; set; } = null!;
 
+    public int? UnidadeId { get; set; }
+    public Unidade? Unidade { get; set; }
+
     public ICollection<Assinatura> Assinaturas { get; set; } = [];
+    public ICollection<Comentario> Comentarios { get; set; } = [];
 }

@@ -1,0 +1,608 @@
+@page "/blocos"
+@using Microsoft.EntityFrameworkCore
+@using NovoSei.Core.Entities
+@using NovoSei.Core.Interfaces
+@using NovoSei.Infrastructure.Data
+@using Microsoft.AspNetCore.Components.Authorization
+@inject ApplicationDbContext Db
+@inject IBlocoReuniaoService BlocoService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Navigation
+
+<PageTitle>Blocos de Reunião - Novo SEI</PageTitle>
+
+<div class="container mx-auto px-6 py-8 max-w-7xl space-y-8">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-5">
+        <div>
+            <h1 class="text-3xl font-extrabold text-slate-800 tracking-tight flex items-center gap-2">
+                🤝 Blocos de Reunião & Compartilhamento
+            </h1>
+            <p class="text-slate-500 mt-1.5 text-sm">
+                Compartilhe e trâmite conjuntos de processos com outras unidades organizacionais.
+            </p>
+        </div>
+        <div>
+            <button @onclick="AbrirModalNovoBloco" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-100 hover:shadow-lg transition-all text-sm flex items-center gap-1.5">
+                <span>➕</span> Novo Bloco
+            </button>
+        </div>
+    </div>
+
+    @if (activeUnidadeId == null)
+    {
+        <div class="flex items-center justify-center min-h-[300px]">
+            <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600 mb-4"></div>
+            <p class="text-slate-500 text-sm ml-3">Identificando sua unidade...</p>
+        </div>
+    }
+    else
+    {
+        <!-- Tabs Nav -->
+        <div class="flex border-b border-slate-200 gap-6 select-none">
+            <button @onclick="() => AlternarAba(true)" 
+                    class="pb-3 text-sm font-bold border-b-2 transition-all @(abaGerados ? "border-indigo-600 text-indigo-600" : "border-transparent text-slate-400 hover:text-slate-600")">
+                📤 Gerados na Unidade (@blocosGerados.Count)
+            </button>
+            <button @onclick="() => AlternarAba(false)" 
+                    class="pb-3 text-sm font-bold border-b-2 transition-all @(!abaGerados ? "border-indigo-600 text-indigo-600" : "border-transparent text-slate-400 hover:text-slate-600")">
+                📥 Recebidos de Outras Unidades (@blocosRecebidos.Count)
+            </button>
+        </div>
+
+        @if (abaGerados)
+        {
+            <!-- Generated Blocks Section -->
+            @if (blocosGerados.Count == 0)
+            {
+                <div class="bg-slate-50 rounded-2xl border border-slate-150 p-12 text-center max-w-xl mx-auto space-y-4">
+                    <div class="text-4xl">📤</div>
+                    <h3 class="text-lg font-bold text-slate-700">Nenhum bloco gerado</h3>
+                    <p class="text-sm text-slate-500">
+                        Sua unidade não criou nenhum bloco de reunião ainda. Blocos servem para agrupar processos e disponibilizá-los em lote.
+                    </p>
+                    <button @onclick="AbrirModalNovoBloco" class="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-all text-xs">
+                        Criar Primeiro Bloco
+                    </button>
+                </div>
+            }
+            else
+            {
+                <div class="grid grid-cols-1 gap-6">
+                    @foreach (var b in blocosGerados)
+                    {
+                        var statusClass = GetStatusClass(b.Status);
+                        var isExpanded = blocoExpandidoId == b.Id;
+
+                        <div class="bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md transition-all overflow-hidden">
+                            <!-- Card Header -->
+                            <div class="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-50/50">
+                                <div class="space-y-1">
+                                    <div class="flex items-center gap-3">
+                                        <h3 class="font-extrabold text-slate-800 text-base">#@b.Id - @b.Descricao</h3>
+                                        <span class="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border @statusClass">
+                                            @b.Status
+                                        </span>
+                                    </div>
+                                    <div class="text-xs text-slate-400 font-light">
+                                        Criado em @b.CriadoEm.ToLocalTime().ToString("dd/MM/yyyy HH:mm") • Contém <strong>@b.Processos.Count</strong> processo(s)
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button @onclick="() => AlternarExpandirBloco(b.Id)" class="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-xs font-semibold text-slate-700 transition-all">
+                                        @(isExpanded ? "Fechar Detalhes" : "Gerenciar Bloco")
+                                    </button>
+                                    
+                                    @if (b.Status == "Aberto")
+                                    {
+                                        <button @onclick="() => AbrirModalDisponibilizar(b)" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-indigo-100">
+                                            🚀 Disponibilizar
+                                        </button>
+                                    }
+                                    else if (b.Status == "Disponibilizado")
+                                    {
+                                        <button @onclick="() => CancelarDisponibilizacao(b.Id)" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-amber-100">
+                                            ↩️ Retirar Disponibilização
+                                        </button>
+                                    }
+                                    else if (b.Status == "Retornado")
+                                    {
+                                        <button @onclick="() => ConcluirBloco(b.Id)" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-emerald-100">
+                                            ✓ Concluir
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+
+                            <!-- Card Details (Expanded Area) -->
+                            @if (isExpanded)
+                            {
+                                <div class="p-6 border-t border-slate-100 grid grid-cols-1 md:grid-cols-3 gap-8 bg-white">
+                                    <!-- Left Column: Processes in block -->
+                                    <div class="md:col-span-2 space-y-4">
+                                        <h4 class="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center justify-between">
+                                            <span>Processos no Bloco (@b.Processos.Count)</span>
+                                            @if (b.Status == "Aberto")
+                                            {
+                                                <button @onclick="() => exibindoAdicionarProcesso = !exibindoAdicionarProcesso" class="text-[10px] text-indigo-600 hover:underline font-bold">
+                                                    @(exibindoAdicionarProcesso ? "Ocultar Formulário" : "＋ Adicionar Processo")
+                                                </button>
+                                            }
+                                        </h4>
+
+                                        @if (exibindoAdicionarProcesso && b.Status == "Aberto")
+                                        {
+                                            <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl flex items-center gap-3">
+                                                <div class="flex-1">
+                                                    <select @bind="processoParaAdicionarId" class="w-full text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500 bg-white">
+                                                        <option value="0">-- Selecione um Processo da Unidade --</option>
+                                                        @foreach (var p in processosUnidade.Where(p => !b.Processos.Any(bp => bp.Id == p.Id)))
+                                                        {
+                                                            <option value="@p.Id">@p.NumeroSequencial - @(p.Assunto.Length > 40 ? p.Assunto[..40] + "..." : p.Assunto)</option>
+                                                        }
+                                                    </select>
+                                                </div>
+                                                <button @onclick="() => AdicionarProcessoAoBloco(b.Id)" class="px-3 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 transition-colors whitespace-nowrap">
+                                                    Adicionar
+                                                </button>
+                                            </div>
+                                        }
+
+                                        <div class="space-y-2">
+                                            @if (b.Processos.Count == 0)
+                                            {
+                                                <p class="text-xs text-slate-500 italic">Nenhum processo adicionado a este bloco.</p>
+                                            }
+                                            else
+                                            {
+                                                @foreach (var p in b.Processos)
+                                                {
+                                                    <div class="flex items-center justify-between p-3 border border-slate-100 rounded-xl hover:bg-slate-50 transition-all text-xs">
+                                                        <div>
+                                                            <a href="/processo/@p.Id" class="font-bold text-indigo-600 hover:underline">@p.NumeroSequencial</a>
+                                                            <span class="text-slate-500 ml-2">@p.Assunto</span>
+                                                        </div>
+                                                        @if (b.Status == "Aberto")
+                                                        {
+                                                            <button @onclick="() => RemoverProcessoDoBloco(b.Id, p.Id)" class="text-[10px] text-rose-500 hover:bg-rose-50 px-2 py-1 rounded-lg transition-all font-semibold">
+                                                                Remover
+                                                            </button>
+                                                        }
+                                                    </div>
+                                                }
+                                            }
+                                        </div>
+                                    </div>
+
+                                    <!-- Right Column: Sharing / Receptors -->
+                                    <div class="md:col-span-1 space-y-4 border-l border-slate-100 pl-8">
+                                        <h4 class="text-xs font-bold text-slate-400 uppercase tracking-widest">Acompanhamento de Trâmite</h4>
+                                        
+                                        <div class="space-y-3">
+                                            @if (!b.BlocoUnidades.Any())
+                                            {
+                                                <p class="text-xs text-slate-500 italic">Este bloco não está compartilhado com nenhuma unidade.</p>
+                                            }
+                                            else
+                                            {
+                                                @foreach (var bu in b.BlocoUnidades)
+                                                {
+                                                    var buClass = bu.Status == "Devolvido" ? "bg-emerald-50 text-emerald-800 border-emerald-100" : "bg-indigo-50 text-indigo-800 border-indigo-100";
+                                                    <div class="p-3 border rounded-xl space-y-1 @buClass">
+                                                        <div class="flex justify-between items-center text-xs">
+                                                            <span class="font-bold">@bu.UnidadeReceptora.Sigla</span>
+                                                            <span class="text-[9px] font-bold uppercase">@bu.Status</span>
+                                                        </div>
+                                                        <span class="block text-[10px] opacity-75">@bu.UnidadeReceptora.Descricao</span>
+                                                        @if (bu.DevolvidoEm.HasValue)
+                                                        {
+                                                            <span class="block text-[9px] opacity-60">Devolvido em @bu.DevolvidoEm.Value.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span>
+                                                        }
+                                                    </div>
+                                                }
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        }
+        else
+        {
+            <!-- Received Blocks Section -->
+            @if (blocosRecebidos.Count == 0)
+            {
+                <div class="bg-slate-50 rounded-2xl border border-slate-150 p-12 text-center max-w-xl mx-auto space-y-4">
+                    <div class="text-4xl">📥</div>
+                    <h3 class="text-lg font-bold text-slate-700">Nenhum bloco recebido</h3>
+                    <p class="text-sm text-slate-500">
+                        Nenhuma outra unidade compartilhou blocos de reunião com a sua unidade no momento.
+                    </p>
+                </div>
+            }
+            else
+            {
+                <div class="grid grid-cols-1 gap-6">
+                    @foreach (var b in blocosRecebidos)
+                    {
+                        var isExpanded = blocoExpandidoId == b.Id;
+                        
+                        <div class="bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md transition-all overflow-hidden">
+                            <!-- Card Header -->
+                            <div class="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-50/50">
+                                <div class="space-y-1">
+                                    <div class="flex items-center gap-3">
+                                        <h3 class="font-extrabold text-slate-800 text-base">#@b.Id - @b.Descricao</h3>
+                                        <span class="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border bg-indigo-50 text-indigo-700 border-indigo-100">
+                                            Recebido
+                                        </span>
+                                    </div>
+                                    <div class="text-xs text-slate-400 font-light">
+                                        Compartilhado por <strong>@b.CriadoPorUsuario.Nome</strong> em @b.CriadoEm.ToLocalTime().ToString("dd/MM/yyyy") • Contém <strong>@b.Processos.Count</strong> processo(s)
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button @onclick="() => AlternarExpandirBloco(b.Id)" class="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-xs font-semibold text-slate-700 transition-all">
+                                        @(isExpanded ? "Ocultar Processos" : "Ver Processos")
+                                    </button>
+                                    <button @onclick="() => DevolverBloco(b.Id)" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-emerald-100 flex items-center gap-1">
+                                        <span>↩️</span> Devolver Bloco
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Card Details (Expanded Area) -->
+                            @if (isExpanded)
+                            {
+                                <div class="p-6 border-t border-slate-100 bg-white space-y-4">
+                                    <h4 class="text-xs font-bold text-slate-400 uppercase tracking-widest">Processos para Consulta (@b.Processos.Count)</h4>
+                                    
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        @foreach (var p in b.Processos)
+                                        {
+                                            <div class="p-4 border border-slate-100 rounded-2xl hover:bg-slate-50/50 transition-all flex justify-between items-center text-xs">
+                                                <div>
+                                                    <a href="/processo/@p.Id" class="font-extrabold text-indigo-600 hover:underline text-sm block">@p.NumeroSequencial</a>
+                                                    <span class="text-slate-500 mt-1 block">@p.Assunto</span>
+                                                </div>
+                                                <a href="/processo/@p.Id" class="px-2.5 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg font-bold transition-colors">
+                                                    Consultar
+                                                </a>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        }
+    }
+</div>
+
+<!-- Modal: Criar Bloco -->
+@if (exibindoModalNovoBloco)
+{
+    <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                <h3 class="text-lg font-black text-slate-800">Criar Novo Bloco</h3>
+                <button @onclick="FecharModalNovoBloco" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+            </div>
+            
+            <div class="space-y-4">
+                <div class="space-y-1">
+                    <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider">Descrição do Bloco</label>
+                    <input type="text" @bind="novaDescricaoBloco" placeholder="Ex: Reunião do Comitê de Tecnologia"
+                           class="w-full text-xs px-3.5 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 bg-white" />
+                </div>
+            </div>
+
+            @if (!string.IsNullOrEmpty(mensagemErroModal))
+            {
+                <span class="block text-xs text-red-600 font-semibold">@mensagemErroModal</span>
+            }
+
+            <div class="flex gap-3 justify-end pt-3">
+                <button @onclick="FecharModalNovoBloco" class="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold text-xs transition-all">
+                    Cancelar
+                </button>
+                <button @onclick="SalvarNovoBloco" class="px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-xs">
+                    Criar Bloco
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Disponibilizar Bloco -->
+@if (exibindoModalDisponibilizar)
+{
+    <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                <h3 class="text-lg font-black text-slate-800">Disponibilizar Bloco #@blocoParaDisponibilizar?.Id</h3>
+                <button @onclick="FecharModalDisponibilizar" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+            </div>
+
+            <p class="text-xs text-slate-500 leading-relaxed">
+                Selecione quais unidades organizacionais receptoras terão acesso de consulta aos processos incluídos neste bloco.
+            </p>
+            
+            <div class="space-y-3 max-h-[200px] overflow-y-auto pr-1">
+                @foreach (var u in todasUnidades)
+                {
+                    var isChecked = unidadesReceptorasSelecionadas.Contains(u.Id);
+                    <div class="flex items-center gap-2.5 py-1.5 px-2.5 border border-slate-100 rounded-xl hover:bg-slate-50 select-none cursor-pointer text-xs"
+                         @onclick="() => AlternarSelecaoUnidade(u.Id)">
+                        <input type="checkbox" checked="@isChecked" readonly
+                               class="rounded bg-slate-50 border-slate-200 text-indigo-600 focus:ring-indigo-500" />
+                        <div>
+                            <span class="font-bold text-slate-700">@u.Sigla</span>
+                            <span class="text-[10px] text-slate-500 ml-2">@u.Descricao</span>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            @if (!string.IsNullOrEmpty(mensagemErroModal))
+            {
+                <span class="block text-xs text-red-600 font-semibold">@mensagemErroModal</span>
+            }
+
+            <div class="flex gap-3 justify-end pt-3">
+                <button @onclick="FecharModalDisponibilizar" class="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold text-xs transition-all">
+                    Cancelar
+                </button>
+                <button @onclick="ConfirmarDisponibilizar" class="px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-xs">
+                    Confirmar Envio
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private Usuario? usuarioLogado;
+    private int? activeUsuarioId;
+    private int? activeUnidadeId;
+
+    private List<BlocoReuniao> blocosGerados = [];
+    private List<BlocoReuniao> blocosRecebidos = [];
+    private List<Unidade> todasUnidades = [];
+    private List<Processo> processosUnidade = [];
+
+    // Tab state
+    private bool abaGerados = true;
+    private int? blocoExpandidoId;
+
+    // Expand details state
+    private bool exibindoAdicionarProcesso = false;
+    private int processoParaAdicionarId = 0;
+
+    // Modal Create Block state
+    private bool exibindoModalNovoBloco = false;
+    private string novaDescricaoBloco = string.Empty;
+    private string mensagemErroModal = string.Empty;
+
+    // Modal Share Block state
+    private bool exibindoModalDisponibilizar = false;
+    private BlocoReuniao? blocoParaDisponibilizar;
+    private HashSet<int> unidadesReceptorasSelecionadas = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CarregarDadosUsuario();
+        await RecarregarDadosPainel();
+    }
+
+    private async Task CarregarDadosUsuario()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        var login = user.FindFirst("login")?.Value ?? user.Identity?.Name ?? "admin";
+
+        usuarioLogado = await Db.Usuarios
+            .Include(u => u.Unidades)
+            .FirstOrDefaultAsync(u => u.Login == login);
+
+        if (usuarioLogado == null)
+        {
+            usuarioLogado = await Db.Usuarios.Include(u => u.Unidades).FirstOrDefaultAsync();
+        }
+
+        if (usuarioLogado != null)
+        {
+            activeUsuarioId = usuarioLogado.Id;
+            var uni = usuarioLogado.Unidades.FirstOrDefault();
+            activeUnidadeId = uni?.Id ?? (await Db.Unidades.FirstOrDefaultAsync())?.Id;
+        }
+    }
+
+    private async Task RecarregarDadosPainel()
+    {
+        if (activeUnidadeId.HasValue)
+        {
+            blocosGerados = await BlocoService.ObterBlocosGeradosUnidadeAsync(activeUnidadeId.Value);
+            blocosRecebidos = await BlocoService.ObterBlocosRecebidosUnidadeAsync(activeUnidadeId.Value);
+
+            // Carregar outras unidades para disponibilizar
+            todasUnidades = await Db.Unidades
+                .Where(u => u.Id != activeUnidadeId.Value)
+                .OrderBy(u => u.Sigla)
+                .ToListAsync();
+
+            // Carregar processos da unidade
+            processosUnidade = await Db.Processos
+                .Where(p => p.UnidadeId == activeUnidadeId.Value)
+                .OrderByDescending(p => p.CriadoEm)
+                .ToListAsync();
+        }
+    }
+
+    private void AlternarAba(bool gerados)
+    {
+        abaGerados = gerados;
+        blocoExpandidoId = null;
+        exibindoAdicionarProcesso = false;
+    }
+
+    private void AlternarExpandirBloco(int id)
+    {
+        if (blocoExpandidoId == id)
+        {
+            blocoExpandidoId = null;
+            exibindoAdicionarProcesso = false;
+        }
+        else
+        {
+            blocoExpandidoId = id;
+            exibindoAdicionarProcesso = false;
+            processoParaAdicionarId = 0;
+        }
+    }
+
+    private void AbrirModalNovoBloco()
+    {
+        novaDescricaoBloco = string.Empty;
+        mensagemErroModal = string.Empty;
+        exibindoModalNovoBloco = true;
+    }
+
+    private void FecharModalNovoBloco()
+    {
+        exibindoModalNovoBloco = false;
+    }
+
+    private async Task SalvarNovoBloco()
+    {
+        mensagemErroModal = string.Empty;
+        if (string.IsNullOrWhiteSpace(novaDescricaoBloco))
+        {
+            mensagemErroModal = "A descrição do bloco é obrigatória.";
+            return;
+        }
+
+        if (activeUnidadeId.HasValue && activeUsuarioId.HasValue)
+        {
+            await BlocoService.CriarBlocoAsync(novaDescricaoBloco.Trim(), activeUnidadeId.Value, activeUsuarioId.Value);
+            exibindoModalNovoBloco = false;
+            await RecarregarDadosPainel();
+        }
+    }
+
+    private async Task AdicionarProcessoAoBloco(int blocoId)
+    {
+        if (processoParaAdicionarId == 0) return;
+
+        var ok = await BlocoService.AdicionarProcessosAoBlocoAsync(blocoId, [processoParaAdicionarId]);
+        if (ok)
+        {
+            processoParaAdicionarId = 0;
+            exibindoAdicionarProcesso = false;
+            await RecarregarDadosPainel();
+        }
+    }
+
+    private async Task RemoverProcessoDoBloco(int blocoId, int processoId)
+    {
+        var ok = await BlocoService.RemoverProcessosDoBlocoAsync(blocoId, [processoId]);
+        if (ok)
+        {
+            await RecarregarDadosPainel();
+        }
+    }
+
+    private void AbrirModalDisponibilizar(BlocoReuniao bloco)
+    {
+        blocoParaDisponibilizar = bloco;
+        unidadesReceptorasSelecionadas.Clear();
+        mensagemErroModal = string.Empty;
+        exibindoModalDisponibilizar = true;
+    }
+
+    private void FecharModalDisponibilizar()
+    {
+        exibindoModalDisponibilizar = false;
+        blocoParaDisponibilizar = null;
+    }
+
+    private void AlternarSelecaoUnidade(int id)
+    {
+        if (unidadesReceptorasSelecionadas.Contains(id))
+        {
+            unidadesReceptorasSelecionadas.Remove(id);
+        }
+        else
+        {
+            unidadesReceptorasSelecionadas.Add(id);
+        }
+    }
+
+    private async Task ConfirmarDisponibilizar()
+    {
+        mensagemErroModal = string.Empty;
+        if (!unidadesReceptorasSelecionadas.Any())
+        {
+            mensagemErroModal = "Selecione ao menos uma unidade receptora.";
+            return;
+        }
+
+        if (blocoParaDisponibilizar != null)
+        {
+            var ok = await BlocoService.DisponibilizarBlocoAsync(blocoParaDisponibilizar.Id, unidadesReceptorasSelecionadas.ToList());
+            if (ok)
+            {
+                exibindoModalDisponibilizar = false;
+                blocoParaDisponibilizar = null;
+                await RecarregarDadosPainel();
+            }
+        }
+    }
+
+    private async Task CancelarDisponibilizacao(int blocoId)
+    {
+        var ok = await BlocoService.CancelarDisponibilizacaoAsync(blocoId);
+        if (ok)
+        {
+            await RecarregarDadosPainel();
+        }
+    }
+
+    private async Task DevolverBloco(int blocoId)
+    {
+        if (activeUnidadeId.HasValue)
+        {
+            var ok = await BlocoService.DevolverBlocoAsync(blocoId, activeUnidadeId.Value);
+            if (ok)
+            {
+                await RecarregarDadosPainel();
+            }
+        }
+    }
+
+    private async Task ConcluirBloco(int blocoId)
+    {
+        var ok = await BlocoService.ConcluirBlocoAsync(blocoId);
+        if (ok)
+        {
+            await RecarregarDadosPainel();
+        }
+    }
+
+    private string GetStatusClass(string status)
+    {
+        return status switch
+        {
+            "Aberto" => "bg-slate-100 text-slate-700 border-slate-200",
+            "Disponibilizado" => "bg-indigo-50 text-indigo-700 border-indigo-200",
+            "Retornado" => "bg-amber-50 text-amber-700 border-amber-200",
+            "Concluido" => "bg-emerald-50 text-emerald-700 border-emerald-200",
+            _ => "bg-slate-50 text-slate-500 border-slate-200"
+        };
+    }
+}
